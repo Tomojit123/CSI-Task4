@@ -1,0 +1,93 @@
+CREATE PROCEDURE AllocateElectives
+AS
+BEGIN
+    -- Temporary tables to hold intermediate results
+    CREATE TABLE #Allotments (
+        SubjectId VARCHAR(50),
+        StudentId VARCHAR(50)
+    );
+
+    CREATE TABLE #UnallotedStudents (
+        StudentId VARCHAR(50)
+    );
+
+    
+    DECLARE @StudentId VARCHAR(50), @Preference INT, @SubjectId VARCHAR(50), @GPA DECIMAL(3,2);
+    
+    DECLARE student_cursor CURSOR FOR
+    SELECT StudentId, GPA
+    FROM StudentDetails
+    ORDER BY GPA DESC;
+    
+    OPEN student_cursor;
+    
+    FETCH NEXT FROM student_cursor INTO @StudentId, @GPA;
+    
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        DECLARE @allocated BIT = 0;
+
+        -- Check each preference for the current student
+        DECLARE preference_cursor CURSOR FOR
+        SELECT SubjectId
+        FROM StudentPreference
+        WHERE StudentId = @StudentId
+        ORDER BY Preference;
+
+        OPEN preference_cursor;
+
+        FETCH NEXT FROM preference_cursor INTO @SubjectId;
+        
+        WHILE @@FETCH_STATUS = 0 AND @allocated = 0
+        BEGIN
+            DECLARE @RemainingSeats INT;
+            SELECT @RemainingSeats = RemainingSeats
+            FROM SubjectDetails
+            WHERE SubjectId = @SubjectId;
+            
+            IF @RemainingSeats > 0
+            BEGIN
+                -- Allocate the subject to the student
+                INSERT INTO #Allotments (SubjectId, StudentId)
+                VALUES (@SubjectId, @StudentId);
+                
+                -- Update remaining seats
+                UPDATE SubjectDetails
+                SET RemainingSeats = RemainingSeats - 1
+                WHERE SubjectId = @SubjectId;
+                
+                SET @allocated = 1;
+            END
+            
+            FETCH NEXT FROM preference_cursor INTO @SubjectId;
+        END
+        
+        CLOSE preference_cursor;
+        DEALLOCATE preference_cursor;
+        
+        -- If the student was not allocated any subject, add to unalloted students
+        IF @allocated = 0
+        BEGIN
+            INSERT INTO #UnallotedStudents (StudentId)
+            VALUES (@StudentId);
+        END
+        
+        FETCH NEXT FROM student_cursor INTO @StudentId, @GPA;
+    END
+    
+    CLOSE student_cursor;
+    DEALLOCATE student_cursor;
+
+    -- Insert results into final tables
+    INSERT INTO Allotments (SubjectId, StudentId)
+    SELECT SubjectId, StudentId
+    FROM #Allotments;
+
+    INSERT INTO UnallotedStudents (StudentId)
+    SELECT StudentId
+    FROM #UnallotedStudents;
+
+    
+    DROP TABLE #Allotments;
+    DROP TABLE #UnallotedStudents;
+END;
